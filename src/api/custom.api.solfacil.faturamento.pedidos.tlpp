@@ -1,0 +1,244 @@
+#include 'totvs.ch'
+#include 'tlpp-core.th'
+
+namespace custom.api.solfacil.faturamento.pedidos
+
+/*/{Protheus.doc} GetPedidos
+Programa para uso como API.
+Objetivo: Consulta dados de pedidos de vendas para retorno via API rest.
+@type user function
+@author Klaus Wolfgram
+@since 20/02/2025
+@version 1.0
+
+@history 20/02/2025, Klaus Wolfgram, Commit na branch main
+/*/
+
+@get(endpoin='/api/solfacil/faturamento/pedidos/:filial/:pedido',description="[U_GetPedidos_DOC]")
+
+User Function GetPedidos() as Logical
+
+    Local lret              as Logical
+    Local lRPC              as Logical
+    Local err               as Object
+    Local cTxtErr           as Character
+    Local cFilPed           as Character
+    Local cNumPed           as Character
+    Local jItemPed          as Json
+    Local jPathPar          as Json
+    Local jResp             as Json
+
+    try
+
+        lret                    := .T.
+        jPathPar                := oRest:getPathparametersRequest()    
+
+        IF type('cEmpAnt') <> 'C'
+            rpcSetEnv('99','01')
+            lRPC            := .T.
+        EndIF    
+
+        err                 := errorClass():new()
+
+        IF !jPathPar:hasProperty('filial')
+            cTxtErr         := 'Filial nao informada na requisicao'
+        EndIF
+
+        IF !jPathPar:hasProperty('pedido')
+            cTxtErr         := IF(empty(cTxtErr),"","/") + "Numero do pedido nao informado"
+        EndIF   
+
+        IF !empty(cTxtErr)
+            err:description := cTxtErr
+            break(err)
+        EndIF     
+
+        SC5->(dbSetOrder(1),dbSeek(cFilPed+cNumPed))
+
+        IF !SC5->(found())
+            err:description := 'Pedido nao encontrado'
+            break(err)
+        EndIF
+
+        SC6->(dbSetOrder(1),dbSeek(SC5->(C5_FILIAL+C5_NUM)))
+
+        IF !SC6->(found())
+            err:description := 'Nenhum item encontrado para o pedido'
+            break(err)
+        EndIF
+
+        jResp               := jsonObject():new()
+        jResp['filial']     := SC5->C5_FILIAL
+        jResp['numero']     := SC5->C5_NUM
+        jResp['tipo'  ]     := SC5->C5_TIPO
+        jResp['codigo']     := SC5->C5_CLIENTE
+        jResp['loja'  ]     := SC5->C5_LOJACLI
+        jResp['nome'  ]     := SC5->(if(C5_TIPO $ 'D/B',;
+        posicione('SA2',1,xFilial('SA2',C5_FILIAL)+C5_CLIENTE+C5_LOJA,'alltrim(A2_NOME)'),;
+        posicione('SA1',1,xFilial('SA1',C5_FILIAL)+C5_CLIENTE+C5_LOJA,'alltrim(A1_NOME)')))
+        jResp['emissao']    := SC5->(dtoc(C5_EMISSAO))
+        jResp['nota'   ]    := SC5->C5_NOTA
+        jResp['serie'  ]    := SC5->C5_SERIE
+        jResp['itens'  ]    := array(0)
+
+        While SC6->(C6_FILIAL+C6_NUM) == SC5->(C5_FILIAL+C5_NUM) .and. !SC6->(eof())
+            
+            jItemPed                           := jsonObject():new()
+            jItemPed['item'                 ]  := SC6->C6_ITEM
+            jItemPed['produto'              ]  := SC6->C6_PRODUTO
+            jItemPed['descricao'            ]  := posicione('SB1',1,xFilial('SB1',SC5->C5_FILIAL)+SC6->C6_PRODUTO,'alltrim(B1_DESC)')
+            jItemPed['quantidade'           ]  := SC6->C6_QTDVEN
+            jItemPed['saldoentreg'          ]  := SC6->(C6_QTDVEN - C6_QTDENT)
+            jItemPed['quantidade_liberada'  ]  := fnGetQtdLibFat()
+            jItemPed['nota'                 ]  := SC6->C6_NOTA
+            jItemPed['serie'                ]  := SC6->c6_SERIE
+
+            aadd(jResp['itens'],jItemPed)
+
+        Enddo
+
+        oRest:setResponse(jResp:toJson())
+
+    catch e
+
+        IF empty(e:description)
+            cTxtErr         := 'Ocorreu um erro indefinido na execucao da requisicao'
+        Else    
+            cTxtErr         := e:description
+        EndIF   
+    
+        jResp               := jsonObject():new()
+        jResp['response']   := cTxtErr
+
+        oRest:setFault(jResp:toJson())
+
+    finally
+
+        IF lRPC
+            rpcClearEnv()
+        EndIF        
+
+    endtry
+
+Return lret
+
+/*/{Protheus.doc} fnGetQtdLibFat
+    Retorna a quantidade liberada para faturamento referente ao item do pedido de vendas posicionado.
+    @type  Static Function
+    /*/
+Static Function fnGetQtdLibFat() as Numeric
+
+    Local nQtdLib   as Numeric
+    Local cAliasSQL as Character
+
+    cAliasSQL       := getNextAlias()
+
+    BeginSQL alias cAliasSQL
+        SELECT ISNULL(SUM(C9_QTDLIB),0) C9_QTDLIB
+        FROM %table:SC9% SC9
+        WHERE SC9.%notdel%
+        AND C9_FILIAL = %exp:SC6->C6_FILIAL%
+        AND C9_PEDIDO = %exp:SC6->C6_NUM%
+        AND C9_ITEM   = %exp:SC6->C6_ITEM%
+        AND C9_NFISCAL= ''
+    EndSQL
+
+    (cAliasSQL)->(dbEval({|| nQtdLib := C9_QTDLIB}),dbCloseArea())
+    
+Return nQtdLib
+
+/*/{Protheus.doc} GetPedidos_DOC
+Programa para retornar a documentação no formato openAPI referente a funcao GetPedidos
+@type user function
+@author Klaus Wolfgram
+@since 19/02/2025
+@version 1.0
+/*/
+User Function GetPedidos_DOC() as Character
+
+    Local jJsonDoc as Json
+    Local jParam   as json
+    Local jServer  as Json
+    Local jPath    as Json
+    Local cJsonDoc as Character
+    Local cLib     as Character
+
+    jJsonDoc                  := jsonObject():new()
+    jJsonDoc['title'        ] := 'Consulta status do pedido de vendas'
+    jJsonDoc['version'      ] := '1.0'
+    jJsonDoc['description1' ] := 'Permite a consulta dos dados de liberacao e faturamento do pedido de vendas'
+    jJsonDoc['description2' ] := 'Para o correto funcionamento eh necessário informar o seguintes parametros:'
+    jJsonDoc['description3' ] := 'header: Authorization - Dados de autenticacao Basic ou Bearer'
+    jJsonDoc['description4' ] := 'header: TenantId - Codigo da empresa,filial para preparacao do ambiente'
+    jJsonDoc['description5' ] := 'Path: filial - Filial indicada no pedido de vendas'
+    jJsonDoc['description6' ] := 'Path: pedido - Numero do pedido a ser consultado'
+    
+    jJsonDoc['servers'      ] := array(0)
+
+    jServer                   := jsonObject():new()
+    jServer['url'           ] := 'https://protheus.solfacil.com.br'
+    jServer['description'   ] := 'Servidor de producao'
+    aadd(jJsonDoc['servers'],jServer)
+
+    jServer                   := jsonObject():new()
+    jServer['url'           ] := 'https://hml.protheus.solfacil.com.br'
+    jServer['description'   ] := 'Servidor de homologacao'
+    aadd(jJsonDoc['servers'],jServer)  
+
+    jJsonDoc['paths'        ] := array(0)  
+
+    jPath                     := jsonObject():new()
+    jPath['path'            ] := '/api/solfacil/faturamento/pedidos/{filial}/{pedido:'
+    jPath['summary'         ] := 'Obtem detalhes do pedido de vendas'
+    jPath['description'     ] := 'Retorna os dados de status do pedido de vendas de acordo com os dados informados nos parametros'
+    jPath['parameters'      ] := array(0)
+
+    jParam                    := jsonObject():new()
+    jParam['name'           ] := 'Authorization'
+    jParam['description'    ] := 'Dados de autenticacao para api rest. Pode ser basic ou bearer(Token JWT). Consulte a documentacao disponivel em: https://tdn.totvs.com/pages/viewpage.action?pageId=578841720'
+    jParam['in'             ] := 'header'
+    jParam['required'       ] := 'true'
+    jParam['type'           ] := 'Character'
+    aadd(jPath['parameters'],jParam)
+
+    jParam                    := jsonObject():new()
+    jParam['name'           ] := 'tenantId'
+    jParam['description'    ] := 'Codigo de empresa e filial, no formato EE,FFFF para preparacao do ambiente.'
+    jParam['in'             ] := 'header'
+    jParam['required'       ] := 'true'
+    jParam['type'           ] := 'Character'
+    aadd(jPath['parameters'],jParam)    
+
+    jParam                    := jsonObject():new()
+    jParam['name'           ] := 'filial'
+    jParam['description'    ] := 'filial no formato FFFF indicada no pedido de vendas.'
+    jParam['in'             ] := 'path'
+    jParam['required'       ] := 'true'
+    jParam['type'           ] := 'Character'
+    aadd(jPath['parameters'],jParam)  
+
+    jParam                    := jsonObject():new()
+    jParam['name'           ] := 'pedido'
+    jParam['description'    ] := 'Numero no formato NNNNNN indicado no pedido de vendas.'
+    jParam['in'             ] := 'path'
+    jParam['required'       ] := 'true'
+    jParam['type'           ] := 'Character'
+    aadd(jPath['parameters'],jParam)
+
+    aadd(jJsonDoc['paths'],jPath)
+
+    cJsonDoc                  := jJsonDoc:toJson()    
+
+    IF getRemoteType(@cLib) >= 0
+        IF "LINUX" $ cLib
+            memowrite(cJsonDoc,'/tmp/doc.api.solfacil.faturamento.pedidos.json')
+        Else
+            memowrite(cJsonDoc,'C:\Temp\doc.api.solfacil.faturamento.pedidos.json')
+        EndIF
+    EndIF
+
+    IF !file('\data\doc.api.solfacil.faturamento.pedidos.json')
+        memowrite(cJsonDoc,'\data\doc.api.solfacil.faturamento.pedidos.json')   
+    EndIF      
+
+Return cJsonDoc
