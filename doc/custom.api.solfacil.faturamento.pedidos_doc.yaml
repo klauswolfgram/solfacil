@@ -1,0 +1,50 @@
+openapi: 3.0.0
+info:
+  title: Consulta status do pedido de vendas
+  version: '1.0'
+  description: "Permite a consulta dos dados de liberacao e faturamento do pedido de vendas\r\nPara o correto funcionamento eh necessário informar o seguintes parametros:\r\nheader: Authorization - Dados de autenticacao Basic ou Bearer\r\nheader: TenantId - Codigo da empresa,filial para preparacao do ambiente\r\nPath: filial - Filial indicada no pedido de vendas\r\nPath: pedido - Numero do pedido a ser consultado"
+servers:
+  - url: https://protheus.solfacil.com.br
+    description: Servidor de producao
+  - url: https://hml.protheus.solfacil.com.br
+    description: Servidor de homologacao
+paths:
+  /api/solfacil/faturamento/pedidos/{filial}/{pedido}:
+    get:
+      summary: Obtem detalhes do pedido de vendas
+      description: >-
+        Retorna os dados de status do pedido de vendas de acordo com os dados
+        informados nos parametros
+      parameters:
+        - name: Authorization
+          description: >-
+            Dados de autenticacao para api rest. Pode ser basic ou bearer(Token
+            JWT). Consulte a documentacao disponivel em:
+            https://tdn.totvs.com/pages/viewpage.action?pageId=578841720
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: tenantId
+          description: >-
+            Codigo de empresa e filial, no formato EE,FFFF para preparacao do
+            ambiente.
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: filial
+          description: filial no formato FFFF indicada no pedido de vendas.
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pedido
+          description: Numero no formato NNNNNN indicado no pedido de vendas.
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dados de status dos itens dos pedidos
