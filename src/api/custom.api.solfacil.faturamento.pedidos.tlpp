@@ -6,6 +6,35 @@ namespace custom.api.solfacil.faturamento
 /*/{Protheus.doc} U_GETPEDIDOS
 Programa para uso como API.
 Objetivo: Consulta dados de pedidos de vendas para retorno via API rest.
+
+Autenticação: Para acesso a essa API, será necessário enviar dados de autenticação por meio do header da requisição. 
+Ela pode ser do tipo basic, nesse caso será enviado username:password, nesse formato, convertido para base64. 
+Podendo também ser do tipo Bearer. Nesse caso será enviado um token JWT obtido por meio de requisição do tipo POST 
+no endpoint /api/oauth2/v1/token?grant_type=password&password=senha&username=usuario. O retorno desse endpoint será um 
+conjunto de informações, sendo:
+- access_token, que deve ser enviado no header da requisição
+- refresh_token, usado para obter um novo token quando necessário
+- token_type, Bearer
+- expires_in, que indica a quantidade de segundos para expiraçaõ do token. 3600 segundos ou 1h.
+Nenhuma interação via código ADVPL/TLPP será necessária para tratamento de autenticação. O próprio framework tratará isso.
+
+Ainda no header da requisição deve ser enviada a chave TenantId, cujo conteudo deve ser grupo de empresas e filial, separados por virgula. 
+Isso é necessário para o correto processo de carregamento dos dados do ambiente.
+
+Idenpotência: Em resumo, é um principio que garante que o estado do sistema não deve ser alterado indevidamente. 
+No caso do método GET, como é apenas consulta, ele é naturalmente idenpotente. 
+Para demais metodos, pode ser necessário via programação, os mecanismos necessários para evitar que uma operação altere o estado do sistema mais de uma vez.
+
+Segurança já é em parte garantida pela autenticação. Mas é complementada pelo uso de criptografica SSL/HTTPS. Isso é feito no processo de configuração e disponibilização 
+do serviço REST, e por tratamentos adequados no código fonte que visem impedir ataques do tipo SQL Injection.
+
+A resiliencia é a capacidade de se recuperar de falhas. Na construção do código advpl, isso pode ser feito usando recursos de controle de transações (Begin Transaction) e 
+controle de sequência (try catch e begin sequence). Outros mecanismos devem ser implementados na camada de infraestrutura que suporte o serviço.
+
+Documentação: A API desenvolvida nesse código possui uma função construída no final do arquivo para geração de arquivo json, no formato openApi, que pode ser importado
+no editor Swagger para geração de documentação. Exemplos do arquivo json, arquivo yml e um cliente gerado pelo Swagger, com exemplos de consumo da api em diferentes linguagens,
+constam no repositório git público: https://github.com/klauswolfgram/solfacil na branche identificada como API.
+
 @type user function
 @author Klaus Wolfgram
 @since 20/02/2025
