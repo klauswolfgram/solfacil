@@ -1,0 +1,825 @@
+#include 'totvs.ch'
+#include 'rptdef.ch'
+#include 'tlpp-core.th' //-- Include necessário para o funcionamento do try catch
+
+/*/{Protheus.doc} U_ELOMSR38
+    Novo relatorio de impressao de cargas.
+    Usa a biblioteca fwMsPrinter
+    Substitui o relatorio U_OMSR020
+    Relatorio impresso via job agendado no appserver
+    @type  Function
+    @author Klaus Wolfgram
+    @since 05/02/2025
+    @version 1.0
+    /*/
+    
+Function U_ELOMSR38(cFilPar as Character)
+
+    Local lRPC      as Logical
+    Local err       as object
+    Local cMsgErr   as Character
+    Local aRet      as Array
+    Local aDadosZTM as Array
+
+    //-- Se a variavel de controle da filial a ser utilizada estiver sem preencher
+    //-- então verifica se a variavel de ambiente esta preenchida esta preenchida.
+    //-- Caso nao esteja preenchida, prepara o ambiente com a filial padrao.
+    //-- Se a variavel de ambiente estiver preparada logo no inicio, significa que nao eh necessário fazer qualquer tipo de preparacao
+    IF empty(cFilPar)
+        IF type('cEmpAnt') <> 'C'
+            rpcSetType(3)
+            rpcSetEnv('01','01')
+            lRPC    := .T.
+        EndIF    
+    Else
+    
+    //-- caso a variavel passada por parametro esteja preenchida, significa que a funcao foi acionada por startjob
+    //-- Neste caso, prepara o ambiente com a filial passada por parametro.
+        rpcSetType(3)
+        rpcSetEnv('01',cFilPar)
+        lRPC        := .T.
+    EndIF
+
+    //-- Fluxo de controle de sequencia
+    try
+
+        //-- variavel auxiliar para desvio de fluxo para o controle de erros. 
+        //-- Essa variavel precisa ser Local e o conteudo inicial precisa ser declarado dentro do fluxo try catch
+        err         := errorClass():new()
+
+        aDadosZTM   := array(0)
+        aRet        := fnGetZTM(@aDadosZTM)
+
+        IF !aRet[1]
+            err:description := aRet[2]
+            break(err)
+        EndIF  
+
+        aRet        := fnProcPrint(aDadosZTM)  
+
+        IF !aRet[1]
+            err:description := aRet[2]
+            break(err)
+        EndIF          
+
+    //-- tratamento de erros
+    catch e
+
+        IF !empty(e:description)
+            
+            cMsgErr := e:description + CRLF
+
+            IF !empty(e:errorstack)
+                cMsgErr += e:errorstack
+            EndIF 
+
+        EndIF
+       
+        IF !empty(cMsgErr)
+            fwAlertError(cMsgErr,'ERRO')
+        EndIF
+
+    //-- Fim do processamento.
+    //-- Esse ponto é executado independente de ter ocorrido ou nao algum erro.
+    finally
+
+        //-- Testa a variavel de controle para verificar se é necessario executar a liberacao do ambiente.
+        IF lRPC
+            rpcClearEnv()
+        EndIF        
+
+    endtry   
+
+Return
+
+/*/{Protheus.doc} fnPrintRel
+    Programa para impressao do relatorio a partir dos registros posicionados nas tabelas ZTM e DAK
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 05/02/2025
+    @version 1.0
+/*/
+Static Function fnPrintRel() as Array
+
+    Local aRet          as Array
+    Local err           as Object
+    Local cFileREL      as Character
+    Local cFilePDF      as Character
+    Local cTarget       as Character
+    Local cPrinter      as Character
+    Local aPrinters     as Array
+
+    Private cAliasSQL   as Character
+    Private cAliasSD2   as Character
+    Private oReport     as Object
+	Private oArial06N   as Object    
+    Private oArial06B   as Object  
+	Private oArial07N   as Object    
+    Private oArial07B   as Object     
+	Private oArial08N   as Object    
+    Private oArial08B   as Object  
+	Private oArial09N   as Object    
+    Private oArial09B   as Object          
+	Private oArial10N   as Object    
+    Private oArial10B   as Object    
+	Private oArial11N   as Object    
+    Private oArial11B   as Object
+	Private oArial12N   as Object    
+    Private oArial12B   as Object 
+	Private oArial13N   as Object    
+    Private oArial13B   as Object       
+	Private oArial14N   as Object    
+    Private oArial14B   as Object     
+
+    Private nPageWidth  as Numeric
+    Private nPageHeight as Numeric
+    Private nLinha      as Numeric
+    Private nMaxLin     as Numeric
+    Private nTamLin     as Numeric    
+    Private lPrintCab   as Logical
+
+    oArial06N           := tFont():new('Arial',,-06,,.F.)
+    oArial06B           := tFont():new('Arial',,-06,,.T.)
+    oArial07N           := tFont():new('Arial',,-07,,.F.)
+    oArial07B           := tFont():new('Arial',,-07,,.T.) 
+    oArial08N           := tFont():new('Arial',,-08,,.F.)
+    oArial08B           := tFont():new('Arial',,-08,,.T.)
+    oArial09N           := tFont():new('Arial',,-09,,.F.)
+    oArial09B           := tFont():new('Arial',,-09,,.T.)    
+    oArial10N           := tFont():new('Arial',,-10,,.F.)
+    oArial10B           := tFont():new('Arial',,-10,,.T.) 
+    oArial11N           := tFont():new('Arial',,-11,,.F.)
+    oArial11B           := tFont():new('Arial',,-11,,.T.)  
+    oArial12N           := tFont():new('Arial',,-12,,.F.)
+    oArial12B           := tFont():new('Arial',,-12,,.T.) 
+    oArial13N           := tFont():new('Arial',,-13,,.F.)
+    oArial13B           := tFont():new('Arial',,-13,,.T.) 
+    oArial14N           := tFont():new('Arial',,-14,,.F.)
+    oArial14B           := tFont():new('Arial',,-14,,.T.)         
+
+    try
+
+        err                     := errorClass():new()
+        cFileREL                := 'CARGA_' + DAK->DAK_COD + '.rel'      
+        cFilePDF                := 'CARGA_' + DAK->DAK_COD + '.pdf'
+        nTamLin                 := 015
+        nMaxLin                 := 800
+        aPrinters               := getImpWindows(.T.)
+
+        /*/
+        IF getRemoteType() >= 0
+            
+            cTarget             := 'C:\Temp\'
+            
+            oReport             := fwMsPrinter():new(cFileREL,IMP_PDF,.F.,cTarget,.T.)
+            oReport:setPortrait(.T.)
+            oReport:setMargin(60,60,60,60)
+            oReport:setResolution(72)
+            oReport:setParm('-RFS')          
+            oReport:setViewPDF(.T.)
+            oReport:cPathPDF    := cTarget
+
+            lFilePDF            := file(cTarget + cFilePDF)
+            
+            IF lFilePDF
+                fErase(cTarget + cFilePDF)
+            EndIF    
+
+        Else    
+            
+            cTarget             := '\ELOMSR37\'
+            cPrinter            := getNewPar("ES_FTAIMPG","   ")
+            
+            oReport             := fwMsPrinter():new(cFileREL,IMP_SPOOL,.F.,cTarget,.T.)
+            oReport:setPortrait(.T.)
+            oReport:setMargin(60,60,60,60)
+            oReport:setResolution(72)
+            oReport:setParm('-RFS')          
+            oReport:setViewPDF(.F.)    
+            oReport:lServer     := .T.  
+            oReport:cPrinter    := cPrinter
+
+        EndIF    
+        /*/
+
+        cTarget                 := '\ELOMSR37\'
+        cPrinter                := getNewPar("ES_FTAIMPG","   ")
+            
+        oReport                 := fwMsPrinter():new(cFileREL,IMP_SPOOL,.F.,cTarget,.T.)
+        oReport:setPortrait(.T.)
+        oReport:setMargin(60,60,60,60)
+        oReport:setResolution(72)
+        oReport:setParm('-RFS')          
+        oReport:setViewPDF(.F.)    
+        oReport:lServer         := .T.  
+        oReport:cPrinter        := cPrinter
+        nPageWidth              := 540 //-- oReport:nPageWidth - 60
+        nPageHeight             := 790 //-- oReport:nPageHeight - 60
+
+        IF !existDir(cTarget)
+            IF !fwMakeDir(cTarget)
+                err:description := 'Erro na criacao do diretorio temporario'
+                break(err)
+            EndIF
+        EndIF
+
+        aRet                    := fnGetSQL()
+
+        IF !aRet[1]
+            err:description     := aRet[2]
+            break(err)
+        EndIF 
+
+        //-- imprime o cabecalho do relatorio
+        fnPrintCab()
+
+        //-- imprime os dados da carga
+        fnPrintDAK()
+
+        //-- imprime os dados de itens da carga
+        fnPrintDAI()
+
+        //-- envia o relatorio para fila de impressao
+        oReport:preview()
+
+        ZTM->(reclock(alias(),.F.))
+			ZTM->ZTM_STATUS     := 'I'
+			ZTM->ZTM_DTIMPR	    := date()
+			ZTM->ZTM_HRIMPR	    := time()    
+        ZTM->(msunlock())                
+
+        aRet                    := {.T.,''}  
+
+    catch e
+
+        aRet                    := {.F.,e:description}
+
+    endtry
+    
+Return aRet
+
+/*/{Protheus.doc} fnProcPrint
+    Programa de processamento para impressa dos registros conforme passagem de parametros
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 05/02/2025
+    @version 1.0
+/*/
+Static Function fnProcPrint(aDadosZTM as Array) as Array
+
+    Local aRet          as Array
+    Local x             as Numeric
+
+    try 
+
+        For x := 1 To Len(aDadosZTM)
+
+            ZTM->(dbSetOrder(1),dbGoTo(aDadosZTM[x,1]))
+            DAK->(dbSetOrder(1),dbGoTo(ZTM->ZTM_CHAVE))
+
+            cFilAnt := aDadosZTM[x,2]
+
+            //-- imprime o relatorio dos registros posicionados.
+            fnPrintRel()
+
+        Next
+
+        aRet := {.T.,''}
+
+    catch e
+
+        aRet := {.F.,e:description}
+
+    endtry
+    
+Return aRet
+
+/*/{Protheus.doc} fnGetZTM
+    Lista os itens pendentes de impressao na tabela ZTM
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 05/02/2025
+    @version 1.0
+    /*/
+Static Function fnGetZTM(aRecZTM as Array) as Array
+
+    Local aRet      as Array
+    Local cAliasSQL as Character
+
+    try
+
+        cAliasSQL   := getNextAlias()
+
+        DAK->(dbSetOrder(1),dbSeek('01250338'))
+
+        BeginSQL Alias cAliasSQL
+            SELECT R_E_C_N_O_ RECZTM, ZTM_FILIAL
+            FROM %table:ZTM% ZTM
+            WHERE ZTM.%notdel%
+            and ZTM_FILIAL = %exp:xFilial("ZTM")%
+            AND ZTM_ROTINA = 'IMPCAR'
+            AND ZTM_STATUS IN ('0','A','P')
+            ORDER BY ZTM_FILIAL,ZTM_CHAVE
+        EndSQL
+
+        aRecZTM := {}
+
+        (cAliasSQL)->(dbEval({|| aadd(aRecZTM,{RECZTM,ZTM_FILIAL})}),dbCloseArea())
+
+        IF empty(aRecZTM)
+            aRecZTM := {}
+            aRet    := {.F.,'Nenhum registro encontrado'}
+        Else
+            aRet    := {.T.,''}    
+        EndIF        
+
+    catch e
+
+        aRet := {.F.,e:description}
+
+    endtry
+    
+Return aRet
+
+/*/{Protheus.doc} fnGetSQL
+    Executa a consulta SQL com os dados que compõe o relatorio impresso.
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 06/02/2025
+    @version 1.0
+/*/
+Static Function fnGetSQL() as Array
+
+    Local aRet as Array
+
+    cAliasSQL   := getNextAlias()
+
+    try
+        
+        BeginSQL alias cAliasSQL
+            COLUMN DAK_DATA AS DATE
+            SELECT //DISTINCT DAK.* , DAI.* , SC9.* , SF2.*, SD2.*,SB1.*, DA3.*, DA4.*
+            DAK_COD, DAK_SEQCAR, DAK_CAMINH, DAK_PESO, DAK_CAPVOL, DAK_PTOENT, DAK_VALOR, DAK_DATA, DAK_HORA, DA3_DESC, DA4_COD, DA4_NOME, 
+            DAI_SEQCAR, DAI_SEQUEN, DAI_NFISCA, DAI_SERIE, DAI_PESO, DAI_PEDIDO, A1_COD, A1_LOJA, A1_NOME, D2_DOC, D2_SERIE, D2_ITEM, B1_COD, B1_DESC, D2_QUANT,
+            D2_UM, D2_QTSEGUM, D2_SEGUM, D2_TOTAL, D2_PESO, F2_VOLUME1, F2_FILIAL
+            FROM %table:DAK% DAK 
+            JOIN %table:DAI% DAI        ON DAI.D_E_L_E_T_ = ' ' AND DAI_FILIAL 	= DAK_FILIAL	AND DAI_COD 	= DAK_COD
+            JOIN %table:SC9% SC9        ON SC9.D_E_L_E_T_ = ' ' AND C9_FILIAL 	= DAI_FILIAL 	AND C9_PEDIDO 	= DAI_PEDIDO 	AND C9_CARGA 	= DAI_COD 		AND C9_SEQCAR = DAI.DAI_SEQCAR 
+            JOIN %table:SD2% SD2        ON SD2.D_E_L_E_T_ = ' ' AND D2_FILIAL 	= C9_FILIAL 	AND D2_PEDIDO 	= C9_PEDIDO 	AND D2_ITEMPV 	= C9_ITEM 
+            JOIN %table:SF2% SF2        ON SF2.D_E_L_E_T_ = ' ' AND F2_FILIAL 	= D2_FILIAL 	AND F2_DOC 		= D2_DOC 		AND F2_SERIE 	= D2_SERIE
+            JOIN %table:SB1% SB1        ON SB1.D_E_L_E_T_ = ' ' AND B1_COD 		= C9_PRODUTO
+            LEFT JOIN %table:DA3% DA3   ON DA3.D_E_L_E_T_ = ' ' AND DA3_COD 	= DAK_CAMINH 
+            LEFT JOIN %table:DA4% DA4   ON DA4.D_E_L_E_T_ = ' ' AND DA4_COD     = DA3_MOTORI 
+            JOIN %table:SA1% SA1        ON SA1.D_E_L_E_T_ = ' ' AND A1_COD      = F2_CLIENTE    AND A1_LOJA     = F2_LOJA
+            WHERE DAK.D_E_L_E_T_ = ' ' 
+            AND DAK_FILIAL = %exp:DAK->DAK_FILIAL%
+            AND DAK_COD = %exp:DAK->DAK_COD%
+            ORDER BY DAK_COD, DAK_SEQCAR, DAI_SEQUEN ,D2_DOC ,D2_ITEM
+        EndSQL      
+
+        aRet := {.T.,''}
+
+    catch e
+
+        aRet := {.F.,e:description}
+
+    endtry
+
+Return aRet
+
+/*/{Protheus.doc} fnValidaPagina
+    Programa para validar o fim da pagina
+    @type  Static Function
+    @author user
+    @since 10/02/2025
+    @version 1.0
+/*/
+Static Function fnValidaPagina()
+
+    IF nLinha >= nMaxLin
+        
+        //-- Encerra a pagina que esta sendo impressa
+        oReport:endpage()
+
+        //-- Imprime novo cabecalho
+        fnPrintCab()
+
+        //-- Verifica se a quebra da pagina foi feita durante a impressao dos itens da nota.
+        IF fwIsInCallStack('fnPrintSD2')
+            
+            //-- Imprime o cabecalho da secao de notas fiscais
+            fnPrintCabSD2()
+
+        Else
+
+            //-- Verifica se a quebra foi feita durante a impressao da sequencia de entrega
+            IF fwIsInCallStack('fnPrintDAI')
+
+                //-- Imprime o cabecalho da secao de sequencia de entrega
+                IF (cAliasSQL)->(eof())
+                    //-- imprime o cabecalho princial com os dados carga                
+                    fnPrintDAK()
+                Else
+                    fnPrintCabDAI()
+                EndIF    
+
+                //-- Caso a quebra nao tenha ocorrido nem na impressao dos itens da nota e nem na impressao da sequencia de entrega...
+            Else
+
+                //-- imprime o cabecalho princial com os dados carga                
+                fnPrintDAK()
+
+            EndIF    
+
+        EndIF
+
+    EndIF
+    
+Return 
+
+/*/{Protheus.doc} fnPrintCab
+    Programa para impressao dos dados do cabecalho
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 06/02/2025
+    @version 1.0
+    /*/
+Static Function fnPrintCab()
+
+    Local cLogo     as Character
+    Local cTitulo   as Character
+    Local cMsgErr   as Character  
+
+    try
+
+        IF file('\system\lgrl' + cEmpAnt + '.bmp')
+            cLogo := '\system\lgrl' + cEmpAnt + '.bmp'
+        Else
+            cLogo := '\system\lgrl.bmp'
+        EndIF  
+
+        cTitulo         := alltrim(fwFilRazSocial()) + ' / FILIAL: ' + cFilAnt  
+
+        oReport:startPage()
+        oReport:sayBitmap(015,010, cLogo, 070, 070)
+
+        oReport:sayAlign(050,010,cTitulo,oArial10N,600,010,CLR_BLACK,2,0)
+        oReport:line(090,010,090,nPageWidth,1)
+
+        nLinha          := 110
+
+    catch e
+
+        cMsgErr         := e:description
+
+    endtry
+
+Return 
+
+/*/{Protheus.doc} fnPrintDAK
+    Imprime a secao com os dados da carga
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 06/02/2025
+    @version 1.0
+    /*/
+Static Function fnPrintDAK()
+
+    Local cMsgErr   as Character
+    Local err       as Object
+
+    try
+
+        err         := errorClass():new()
+
+        oReport:sayAlign(nLinha,010,'Carga'                                                            ,oArial08B,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,050,'Seq.'                                                             ,oArial08B,020,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,070,'Veiculo'                                                          ,oArial08B,050,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,120,'Modelo'                                                           ,oArial08B,100,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,220,'Motorista'                                                        ,oArial08B,090,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,310,'Peso'                                                             ,oArial08B,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,350,'Volume M3'                                                        ,oArial08B,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,390,'Pt.Ent.'                                                          ,oArial08B,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,430,'Valor'                                                            ,oArial08B,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,470,'Data'                                                             ,oArial08B,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,510,'Hora'                                                             ,oArial08B,040,010,CLR_BLACK,0,0)
+
+        nLinha += 010
+        oReport:line(nLinha,010,nLinha,nPageWidth,1)
+        nLinha += 005
+
+        oReport:sayAlign(nLinha,010,(cAliasSQL)->DAK_COD                                               ,oArial08N,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,050,(cAliasSQL)->DAK_SEQCAR                                            ,oArial08N,020,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,070,(cAliasSQL)->DAK_CAMINH                                            ,oArial08N,050,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,120,(cAliasSQL)->(substr(DA3_DESC,1,15))                               ,oArial08N,100,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,220,(cAliasSQL)->(substr(DA4_NOME,1,45))                               ,oArial08N,090,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,310,(cAliasSQL)->(alltrim(transform(DAK_PESO,"@E 999,999,999.99")))    ,oArial08N,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,350,(cAliasSQL)->(alltrim(transform(DAK_CAPVOL,"@E 999,999,999.99")))  ,oArial08N,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,390,(cAliasSQL)->(cValToChar(DAK_PTOENT))                              ,oArial08N,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,430,(cAliasSQL)->(alltrim(transform(DAK_VALOR,"@E 999,999,999.99")))   ,oArial08N,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,470,(cAliasSQL)->(dtoc(DAK_DATA))                                      ,oArial08N,040,010,CLR_BLACK,0,0)
+        oReport:sayAlign(nLinha,510,(cAliasSQL)->DAK_HORA                                              ,oArial08N,040,010,CLR_BLACK,0,0)
+
+        nLinha += 025
+        oReport:line(nLinha,010,nLinha,nPageWidth,1)
+        nLinha += 010
+
+    catch e
+
+        IF !empty(e:description)
+
+            cMsgErr := e:description
+
+            IF !empty(e:errorstack)
+                cMsgErr += CRLF + e:errorstack
+            EndIF
+
+        EndIF        
+
+    endtry
+
+Return 
+
+/*/{Protheus.doc} fnPrintCabDAI
+    Imprime o cabecalho da secao de sequencia de entrega.
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 10/02/2025
+    @version 1.0
+    /*/
+Static Function fnPrintCabDAI()
+
+    Local err       as Object
+    Local cMsgErr   as Character
+    
+    try
+
+        err         := errorClass():new()
+
+        oReport:sayAlign(nLinha,010,'Seq. Entrega'                                                ,oArial08B,080,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,090,'Nota'                                                        ,oArial08B,060,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,150,'Serie'                                                       ,oArial08B,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,190,'Cliente'                                                     ,oArial08B,180,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,400,'Peso'                                                        ,oArial08B,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,440,'Pedido'                                                      ,oArial08B,070,010,CLR_BLACK,0,2)
+
+        nLinha      += 010
+        oReport:line(nLinha,010,nLinha,nPageWidth,1)
+        nLinha      += 005     
+
+        lPrintCab   := .F.   
+
+    catch e
+
+        IF !empty(e:description)
+            cMsgErr := e:description
+            IF !empty(e:errorstack)
+                cMsgErr += CRLF + e:errorstack
+            EndIF
+        EndIF
+
+    endtry
+    
+Return 
+
+/*/{Protheus.doc} fnPrintDAI
+    Imprime os itens da carga
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 06/02/2025
+    @version 1.0
+    /*/
+Static Function fnPrintDAI()
+
+    Local cMsgErr       as Character
+    Local cChaveDAI     as Character
+
+    Local err           as Object
+
+    Private nVlrTotal   as Numeric
+    Private nQtdTotal   as Numeric
+    Private nQtSegTot   as Numeric
+    Private nPesoTot    as Numeric
+    Private nVolTotal   as Numeric
+
+    try
+
+        err             := errorClass():new()
+        lPrintCab       := .T.
+
+        (cAliasSQL)->(dbGoTop())
+
+        While !(cAliasSQL)->(eof())
+
+            cChaveDAI := (cAliasSQL)->(DAK_COD + DAI_SEQCAR + DAI_SEQUEN)
+
+            lPrintCab := .T.
+
+            //-- Valida quebra de pagina
+            fnValidaPagina()                 
+
+            //-- Imprime o cabecalho da secao de itens da sequencia de entrega
+            IF lPrintCab
+                fnPrintCabDAI()
+            EndIF               
+
+            oReport:sayAlign(nLinha,010,(cAliasSQL)->DAI_SEQUEN                                           ,oArial08N,080,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,090,(cAliasSQL)->DAI_NFISCA                                           ,oArial08N,060,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,150,(cAliasSQL)->DAI_SERIE                                            ,oArial08N,040,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,190,(cAliasSQL)->(A1_COD + ' ' + A1_LOJA + ' - ' + A1_NOME)           ,oArial08N,180,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,400,(cAliasSQL)->(alltrim(transform(DAI_PESO,"@E 999,999,999.9999"))) ,oArial08N,040,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,440,(cAliasSQL)->DAI_PEDIDO                                           ,oArial08N,070,010,CLR_BLACK,0,2)     
+
+            nLinha += nTamLin        
+
+            //-- Imprime os itens da nota
+            fnPrintSD2()   
+
+            nLinhaAux := nLinha               
+
+        Enddo
+
+        //-- Imprime os totalizadores da carga
+        oReport:sayAlign(nLinha,010, 'TOT. CARGA'                                                       ,oArial08N,060,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,330,alltrim(transform(nQtdTotal     ,"@E 999,999,999.99"))              ,oArial08N,030,010,CLR_BLACK,0,2)                
+        oReport:sayAlign(nLinha,370,alltrim(transform(nQtSegTot     ,"@E 999,999,999.99"))              ,oArial08N,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,410,alltrim(transform(nVlrTotal     ,"@E 999,999,999.99"))              ,oArial08N,060,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,460,alltrim(transform(nPesoTot      ,"@E 999,999,999.99"))              ,oArial08N,030,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,500,alltrim(transform(nVolTotal     ,"@E 999,999,999.99"))              ,oArial08N,040,010,CLR_BLACK,0,2)              
+
+    catch e
+
+        IF !empty(e:description)
+
+            cMsgErr := e:description
+
+            IF !empty(e:errorstack)
+                cMsgErr += CRLF + e:errorstack
+            EndIF
+
+        EndIF
+
+    endtry
+    
+Return  
+
+/*/{Protheus.doc} fnPrintCabSD2
+    Imprime o cabecalho da secao de itens da nota fiscal
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 10/02/2025
+    @version 1.0
+    /*/
+Static Function fnPrintCabSD2()
+
+    Local err       as Object
+    Local cMsgErr   as Character
+
+    try
+
+        err         := errorClass():new()
+
+        oReport:sayAlign(nLinha,010,'Nota'          ,oArial08B,060,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,080,'Item'          ,oArial08B,030,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,110,'Produto'       ,oArial08B,060,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,170,'Descrição'     ,oArial08B,140,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,310,'Und.'          ,oArial08B,020,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,330,'Qtd'           ,oArial08B,030,010,CLR_BLACK,0,2)                
+//      oReport:sayAlign(nLinha,360,'Seg.UM'        ,oArial08B,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,370,'CX/FD'         ,oArial08B,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,410,'Valor'         ,oArial08B,050,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,460,'Peso'          ,oArial08B,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,500,'Volume'        ,oArial08B,040,010,CLR_BLACK,0,2)
+
+        nLinha      += 010
+        oReport:line(nLinha,010,nLinha,nPageWidth,1)
+        nLinha      += 005 
+
+        lPrintCab   := .F.
+
+    catch e
+
+        IF !empty(e:description)
+            cMsgErr := e:description
+            IF !empty(e:errorstack)
+                cMsgErr += CRLF + e:errorstack
+            EndIF    
+        EndIF
+
+    endtry
+    
+Return 
+
+/*/{Protheus.doc} fnPrintSD2
+    Imprime os itens das notas
+    @type  Static Function
+    @author Klaus Wolfgram
+    @since 07/02/2025
+    @version 1.0
+/*/
+Static Function fnPrintSD2()
+
+    Local cMsgErr   as Character
+    Local err       as Object
+    Local cChaveNF  as Character
+
+    Local nQtdVen   as Numeric
+    Local nQtdSeg   as Numeric
+    Local nValor    as Numeric
+    Local nPeso     as Numeric
+    Local nVolumes  as Numeric
+
+//  Local aAreaSQL  as Array
+
+    try
+
+        lPrintCab   := .T.
+        err         := errorClass():new()
+        cChaveNF    := (cAliasSQL)->(DAI_SEQUEN+DAI_NFISCA+DAI_SERIE)
+
+        While cChaveNF == (cAliasSQL)->(DAI_SEQUEN+DAI_NFISCA+DAI_SERIE) .and. !(cAliasSQL)->(eof())
+
+            //-- Valida quebra de pagina
+            fnValidaPagina()        
+
+            //-- Imprime o cabecalho da pagina
+            IF lPrintCab
+                fnPrintCabSD2()                
+            EndIF
+
+            cCodPrd  := (cAliasSQL)->B1_COD
+            cFilPrd  := (cAliasSQL)->F2_FILIAL
+            nQtdPrd  := (caliasSQL)->D2_QUANT
+            nVolPrd  := osPrCapArm(cCodPrd,cFilPrd)
+            nVolPrd  *= nQtdPrd
+
+            oReport:sayAlign(nLinha,010,(cAliasSQL)->(alltrim(D2_DOC) + ' / ' + alltrim(D2_SERIE))          ,oArial08N,060,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,080,(cAliasSQL)->D2_ITEM                                                ,oArial08N,030,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,110,(cAliasSQL)->B1_COD                                                 ,oArial08N,060,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,170,(cAliasSQL)->B1_DESC                                                ,oArial08N,140,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,310,(cAliasSQL)->D2_UM                                                  ,oArial08N,020,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,330,(cAliasSQL)->(alltrim(transform(D2_QUANT,"@E 999,999,999.99")))     ,oArial08N,030,010,CLR_BLACK,0,2)                
+//          oReport:sayAlign(nLinha,360,(cAliasSQL)->D2_SEGUM                                               ,oArial08N,040,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,370,(cAliasSQL)->(alltrim(transform(D2_QTSEGUM,"@E 999,999,999.99")))   ,oArial08N,040,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,410,(cAliasSQL)->(alltrim(transform(D2_TOTAL  ,"@E 999,999,999.99")))   ,oArial08N,050,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,460,(cAliasSQL)->(alltrim(transform(D2_PESO   ,"@E 999,999,999.99")))   ,oArial08N,040,010,CLR_BLACK,0,2)
+            oReport:sayAlign(nLinha,500,(cAliasSQL)->(alltrim(transform(nVolPrd   ,"@E 999,999,999.99")))   ,oArial08N,040,010,CLR_BLACK,0,2) 
+
+            nQtdVen     += (cAliasSQL)->D2_QUANT
+            nQtdSeg     += (cAliasSQL)->D2_QTSEGUM
+            nValor      += (cAliasSQL)->D2_TOTAL
+            nPeso       += (cAliasSQL)->D2_PESO    
+            nVolumes    += nVolPrd
+
+            nLinha      += nTamLin  
+
+            (cAliasSQL)->(dbSkip())
+
+        Enddo
+
+        nVlrTotal   += nValor
+        nQtdTotal   += nQtdVen
+        nQtSegTot   += nQtdSeg
+        nPesoTot    += nPeso
+        nVolTotal   += nVolumes
+
+        //-- Imprime os totalizadores da nota fiscal
+        oReport:sayAlign(nLinha,010,'TOT. NF'                                                           ,oArial08N,060,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,330,alltrim(transform(nQtdVen   ,"@E 999,999,999.99"))                  ,oArial08N,030,010,CLR_BLACK,0,2)                
+        oReport:sayAlign(nLinha,370,alltrim(transform(nQtdSeg   ,"@E 999,999,999.99"))                  ,oArial08N,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,410,alltrim(transform(nValor    ,"@E 999,999,999.99"))                  ,oArial08N,050,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,460,alltrim(transform(nPeso     ,"@E 999,999,999.99"))                  ,oArial08N,040,010,CLR_BLACK,0,2)
+        oReport:sayAlign(nLinha,500,alltrim(transform(nVolumes  ,"@E 999,999,999.99"))                  ,oArial08N,040,010,CLR_BLACK,0,2)
+
+        nLinha  += nTamLin          
+        oReport:line(nLinha,010,nLinha,nPageWidth,1)   
+        nLinha += nTamLin     
+
+    catch e
+
+        IF !empty(e:description)
+
+            cMsgErr := e:description
+
+            IF !empty(e:errorstack)
+                cMsgErr += CRLF + e:errorstack
+            EndIF
+
+        EndIF
+
+    endtry
+    
+Return 
+
+/*/{Protheus.doc} U_ELOMSJ37
+    Execucao via job
+    @type  Function
+    @author user
+    @since 10/02/2025
+    @version 1.0
+    /*/
+
+//-- Funcao acionada via job para execucao do programa do relatório quando há necessidade de execucao em filial diferente da atual.
+Function U_ELOMSJ38(cFilPar)
+    startJob('U_ELOMSR38',getEnvServer(),.T.,cFilPar)
+Return 
