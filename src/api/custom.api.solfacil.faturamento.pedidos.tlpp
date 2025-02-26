@@ -45,7 +45,11 @@ custom.api.solfacil.faturamento.U_GETPEDIDOS
 
 @get(endpoint='/api/solfacil/faturamento/pedidos/:filial/:pedido',description="[U_GETPEDIDOS_DOC]")
 
-Function U_GETPEDIDOS
+//-- @post()
+//-- @put()
+//-- @delete()
+
+User Function GETPEDIDOS
 
     Local lret              as Logical
     Local lRPC              as Logical
@@ -61,6 +65,9 @@ Function U_GETPEDIDOS
 
         lret                := .T.
         jPathPar            := oRest:getPathparametersRequest()    
+        //-- oRest:getHeadersRequest()
+        //-- oRest:getQueryStringRequest()
+        //-- oRest:getBodyRequest()
 
         IF type('cEmpAnt') <> 'C'
             rpcSetEnv('99','01')
@@ -80,7 +87,12 @@ Function U_GETPEDIDOS
         IF !empty(cTxtErr)
             err:description := cTxtErr
             break(err)
-        EndIF     
+        EndIF   
+
+        cFilPed            := jPathPar['filial']
+        cNumPed            := jPathPar['pedido']
+
+        jPathPar['status'] := 'success'
 
         SC5->(dbSetOrder(1),dbSeek(cFilPed+cNumPed))
 
@@ -126,6 +138,8 @@ Function U_GETPEDIDOS
             jItemPed['serie'                ]  := SC6->c6_SERIE
 
             aadd(jResp['itens'],jItemPed)
+
+            SC6->(dbSkip())
 
         Enddo
 
